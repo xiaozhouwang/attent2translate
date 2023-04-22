@@ -1,27 +1,56 @@
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 import random
 import pickle
+from tqdm import tqdm
+import wandb
+from seq2seq import Seq2Seq
+random.seed(124)
 
 
-def get_vocab_size():
-    token_maps = pickle.load(open("../data/token_map.pk", "rb"))
-    return {'chinese': len(token_maps[0]), 'english': len(token_maps[1])}
-vocabs = get_vocab_size()
+def preprocess_sentences(english, chinese, min_len=10, max_len=100):
+    new_english = []
+    new_chinese = []
+    for e, c in zip(english, chinese):
+        if len(e) < min_len or len(c) < min_len or len(e) > max_len or len(c) > max_len:
+            continue
+        new_chinese.append(c)
+        new_english.append(e)
+    return new_english, new_chinese
+
+
+def get_train_test_split():
+    chinese = pickle.load(open("../data/chinese_lines.pk", "rb"))
+    english = pickle.load(open("../data/english_lines.pk", "rb"))
+    test_index = set(random.sample(range(len(chinese)), int(0.1*len(chinese))))
+    train_index = set(range(len(chinese))).difference(test_index)
+    train_english = [english[i] for i in range(len(english)) if i in train_index]
+    test_english = [english[i] for i in range(len(english)) if i in test_index]
+    train_chinese = [chinese[i] for i in range(len(chinese)) if i in train_index]
+    test_chinese = [chinese[i] for i in range(len(chinese)) if i in test_index]
+    train_english, train_chinese = preprocess_sentences(train_english, train_chinese)
+    test_english, test_chinese = preprocess_sentences(test_english, test_chinese)
+    print("training size:", len(train_english), "test size:", len(test_english))
+    return train_english, train_chinese, test_english, test_chinese
+
 
 class DataLoader:
-    def __init__(self, batch_size, shuffle=True):
-        self.chinese = pickle.load(open("../data/chinese_lines.pk", "rb"))
-        self.english = pickle.load(open("../data/english_lines.pk", "rb"))
+    def __init__(self, seq_chinese, seq_english, batch_size, shuffle=True):
+        self.chinese = seq_chinese
+        self.english = seq_english
         self.batch_size = batch_size
         self.num_samples = len(self.chinese)
         self.shuffle = shuffle
 
+    def __len__(self):
+        return int(np.ceil(len(self.chinese)/self.batch_size))
+
     def __iter__(self):
         if self.shuffle:
             index_list = list(range(len(self.chinese)))
+            random.shuffle(index_list)
             self.chinese = [self.chinese[i] for i in index_list]
             self.english = [self.english[i] for i in index_list]
         for i in range(0, self.num_samples, self.batch_size):
@@ -34,96 +63,61 @@ class DataLoader:
                                                        padding_value=0)
             padded_english = nn.utils.rnn.pad_sequence([torch.tensor(seq) for seq in batch_english], batch_first=True,
                                                        padding_value=0)
-            yield padded_english, length_english, torch.tensor(padded_chinese), torch.tensor(length_chinese)
-
-
-class Encoder(nn.Module):
-    """encode the source sentence: english"""
-    def __init__(self, input_embed_size=256, hidden_size=512, vocab_size=vocabs['english'], bidirectional=True):
-        super(Encoder, self).__init__()
-        self.embedding = nn.Embedding(vocab_size+1, input_embed_size) # +1 for since we also need padding index
-        self.hidden_size = hidden_size
-        self.lstm = nn.LSTM(input_embed_size, hidden_size, num_layers=2, bidirectional=bidirectional, batch_first=True)
-
-    def forward(self, input_x, lengths):
-        x = self.embedding(input_x)
-        x_packed = pack_padded_sequence(x, lengths, batch_first=True, enforce_sorted=False)
-        packed_output, (hidden, cell) = self.lstm(x_packed)
-        output, _ = pad_packed_sequence(packed_output, batch_first=True)
-        return output, hidden, cell
-
-
-class NoAttention(nn.Module):
-    """no attention, just take the last output of encoder as the attention output"""
-    def __init__(self):
-        super(NoAttention, self).__init__()
-
-    def forward(self, encoder_outputs, encoder_sequence_lengths):
-        return torch.stack([x[-1] for x in nn.utils.rnn.unpad_sequence(encoder_outputs, encoder_sequence_lengths,
-                                                                       batch_first=True)])
-
-
-class OneStepDecoder(nn.Module):
-    """decoding one step a time"""
-    def __init__(self, output_embed_size=256, hidden_size=1024, vocab_size=vocabs['chinese']):
-        super(OneStepDecoder, self).__init__()
-        self.embedding = nn.Embedding(vocab_size + 1, output_embed_size)
-        self.output_size = vocab_size+1 # add padding
-        self.hidden_size = hidden_size
-        self.lstm = nn.LSTM(output_embed_size, hidden_size, num_layers=1, batch_first=True)
-        self.attention = NoAttention()
-        self.out = nn.Linear(hidden_size, self.output_size)
-
-    def forward(self, input_x, hidden, cell, encoder_outputs, encoder_sequence_lengths):
-        x = self.embedding(input_x)
-        if hidden is None:
-            output, (hidden, cell) = self.lstm(x)
-        else:
-            output, (hidden, cell) = self.lstm(x, (hidden, cell))
-        context_vector = self.attention(encoder_outputs, encoder_sequence_lengths)
-        assert context_vector.size() == (input_x.size(0), self.hidden_size)
-        output = output + context_vector.unsqueeze(1)
-        output = self.out(output)
-        return output, hidden, cell
-
-
-class Seq2Seq(nn.Module):
-    def __init__(self):
-        super(Seq2Seq, self).__init__()
-        self.encoder = Encoder()
-        self.decoder = OneStepDecoder()
-        self.loss_func = nn.CrossEntropyLoss(ignore_index=0)
-
-    def forward(self, input_sequence, input_seq_lengths, output_sequence=None, max_output_sequence=None):
-        encoder_outputs, _, _ = self.encoder(input_sequence, input_seq_lengths)
-        outputs = []
-        max_output_sequence = output_sequence.size(1) if output_sequence is not None else max_output_sequence
-        for t in range(max_output_sequence):
-            decoder_input = output_sequence[:, t].unsqueeze(1)
-            if t == 0:
-                output, hidden, cell = decoder(decoder_input, None, None, encoder_outputs, input_seq_lengths)
-            else:
-                output, hidden, cell = decoder(decoder_input, hidden, cell, encoder_outputs, input_seq_lengths)
-            outputs.append(output)
-        outputs = torch.cat(outputs, dim=1)
-        loss = self.loss_func(outputs.transpose(-2, -1), output_sequence) if output_sequence is not None else None
-        return outputs, loss
+            yield padded_english, torch.tensor(length_english, dtype=torch.int64), padded_chinese, torch.tensor(length_chinese, dtype=torch.int64)
 
 
 if __name__ == '__main__':
-    data_loader = DataLoader(batch_size=100)
-    encoder = Encoder(64, 128, vocabs['english'])
-    decoder = OneStepDecoder(64, 128*2, vocabs['chinese'])
-    # Iterate over the batches
-    for batch_idx, batch in enumerate(data_loader):
-        padded_english, length_english, padded_chinese, length_chinese = batch
-        encoder_output, _, _ = encoder(padded_english, length_english)
-        for t in range(padded_chinese.size(1)): # decode one step a time!
-            decoder_input = padded_chinese[:, t].unsqueeze(1)
-            if t == 0:
-                output, hidden, cell = decoder(decoder_input, None, None, encoder_output, length_english)
-                print(output.shape, hidden.shape, cell.shape)
-            else:
-                output, hidden, cell = decoder(decoder_input, hidden, cell, encoder_output, length_english)
-                print(output.shape, hidden.shape, cell.shape)
-        break
+    run_name = "no_attention"
+    wandb.init(project="Seq2Seq", name=run_name)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    NEPOCH = 100
+    BestEpoch=0
+    BestLoss = np.Inf
+    train_english, train_chinese, test_english, test_chinese = get_train_test_split()
+    train_data_loader = DataLoader(seq_chinese=train_chinese, seq_english=train_english, batch_size=128)
+    test_data_loader = DataLoader(seq_chinese=test_chinese, seq_english=test_english, batch_size=128, shuffle=False)
+    model = Seq2Seq(device=device).to(device)
+    optimizer = optim.AdamW(model.parameters(), fused=True)
+    optimizer.zero_grad()
+
+    for epoch in range(NEPOCH):
+        epoch_loss = 0
+        for s, batch in enumerate(tqdm(train_data_loader)):
+            padded_english, length_english, padded_chinese, length_chinese = batch
+            padded_english = padded_english.to(device)
+            padded_chinese = padded_chinese.to(device)
+            outputs, loss = model(padded_english, length_english, padded_chinese)
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
+            epoch_loss += loss.item()
+
+            if s % 10 == 0:
+                wandb.log({'epoch loss': loss.item()})
+
+        epoch_loss /= len(train_data_loader)
+        print(f"epoch: {epoch}, training loss: {epoch_loss}")
+        wandb.log({'train_loss': epoch_loss})
+
+        """test loss"""
+        epoch_loss = 0
+        with torch.no_grad():
+            for batch in tqdm(test_data_loader):
+                padded_english, length_english, padded_chinese, length_chinese = batch
+                padded_english = padded_english.to(device)
+                padded_chinese = padded_chinese.to(device)
+                outputs, loss = model(padded_english, length_english, padded_chinese)
+                epoch_loss += loss.item()
+            epoch_loss /= len(test_data_loader)
+            print(f"epoch: {epoch}, test loss: {epoch_loss}")
+            wandb.log({'test_loss': epoch_loss, 'epoch': epoch})
+
+        if epoch_loss < BestLoss:
+            BestLoss = epoch_loss
+            BestEpoch = epoch + 1
+            print(f"saving best model with loss {BestLoss} at epoch {BestEpoch}")
+            torch.save(model.state_dict(), f"../data/{run_name}.pt")
+
+        if epoch - 3 > BestEpoch:
+            print(f"early stop at {epoch+1} with best epoch {BestEpoch} and test loss {BestLoss}.")
+            break
