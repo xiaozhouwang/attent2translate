@@ -61,19 +61,56 @@ class AdditiveAttention(nn.Module):
 
 
 class ScaledDotProductAttention(nn.Module):
-    def __init__(self, hidden_size=HIDDENSIZE*2):
+    def __init__(self, hidden_size=HIDDENSIZE*2, attention_type='scaled_dot_product'):
         super(ScaledDotProductAttention, self).__init__()
         self.register_buffer('scaling_factor', torch.rsqrt(torch.tensor(hidden_size, dtype=torch.float32)))
+        self.attention_type = attention_type
 
-    def forward(self, output, encoder_outputs, encoder_sequence_lengths):
+    def forward(self, output, encoder_outputs, encoder_sequence_lengths, value=None):
         query = output # [B, 1, H]
         key = encoder_outputs # [B, encoder_max_seq_length, H]
-        value = encoder_outputs
-        mask = create_mask_from_lengths(encoder_sequence_lengths, attention_type='scaled_dot_product')
+        if value is None:
+            """this is a hacky way to reserve a place for multi-head attention to pass in projected value"""
+            value = encoder_outputs
+        mask = create_mask_from_lengths(encoder_sequence_lengths, attention_type=self.attention_type)
         scores = torch.matmul(query, key.transpose(-2, -1)) * self.scaling_factor
         scores = scores.masked_fill(mask == 0, -1e10)
         attention_weights = torch.softmax(scores, dim=-1)
         context_vector = torch.matmul(attention_weights, value)
+        return context_vector
+
+
+class MultiHeadAttention(nn.Module):
+    def __init__(self, hidden_size=HIDDENSIZE*2, num_heads=8):
+        super(MultiHeadAttention, self).__init__()
+        assert hidden_size % num_heads == 0
+        self.hidden_size = hidden_size
+        self.num_heads = num_heads
+        self.head_size = hidden_size // num_heads
+
+        self.WQ = nn.Linear(hidden_size, hidden_size, bias=False)
+        self.WK = nn.Linear(hidden_size, hidden_size, bias=False)
+        self.WV = nn.Linear(hidden_size, hidden_size, bias=False)
+        self.WO = nn.Linear(hidden_size, hidden_size, bias=False)
+
+    def split_heads(self, x):
+        return x.view(x.size(0), x.size(1), self.num_heads, self.head_size).transpose(1, 2)
+
+    def combine_heads(self, x):
+        return x.transpose(1, 2).contiguous().view(x.size(0), -1, self.hidden_size)
+
+    def forward(self, output, encoder_outputs, encoder_sequence_lengths):
+        query = output
+        key = encoder_outputs
+        value = encoder_outputs
+        query_proj = self.split_heads(self.WQ(query))
+        key_proj = self.split_heads(self.WK(key))
+        value_proj = self.split_heads(self.WV(value))
+        context_vector = ScaledDotProductAttention(self.head_size, attention_type='multi_head')(
+            query_proj, key_proj, encoder_sequence_lengths, value_proj)
+        context_vector = self.combine_heads(context_vector)
+        context_vector = self.WO(context_vector)
+
         return context_vector
 
 
@@ -85,6 +122,8 @@ def create_mask_from_lengths(encoder_seq_lengths, max_length=None, attention_typ
         return mask.unsqueeze(-1).to(device)
     elif attention_type == 'scaled_dot_product':
         return mask.unsqueeze(1).to(device)
+    elif attention_type == 'multi_head':
+        return mask.unsqueeze(1).unsqueeze(1).to(device)
 
 
 class OneStepDecoder(nn.Module):
@@ -94,7 +133,7 @@ class OneStepDecoder(nn.Module):
         self.output_size = vocab_size+1 # add padding
         self.hidden_size = hidden_size
         self.lstm = nn.LSTM(output_embed_size, hidden_size, num_layers=1, batch_first=True)
-        self.attention = ScaledDotProductAttention()
+        self.attention = MultiHeadAttention()
         self.out = nn.Linear(hidden_size, self.output_size)
 
     def forward(self, x, hidden, cell, encoder_outputs, encoder_sequence_lengths):
