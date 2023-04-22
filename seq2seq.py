@@ -60,11 +60,31 @@ class AdditiveAttention(nn.Module):
         return context_vector
 
 
-def create_mask_from_lengths(encoder_seq_lengths, max_length=None, device=DEVICE):
+class ScaledDotProductAttention(nn.Module):
+    def __init__(self, hidden_size=HIDDENSIZE*2):
+        super(ScaledDotProductAttention, self).__init__()
+        self.register_buffer('scaling_factor', torch.rsqrt(torch.tensor(hidden_size, dtype=torch.float32)))
+
+    def forward(self, output, encoder_outputs, encoder_sequence_lengths):
+        query = output # [B, 1, H]
+        key = encoder_outputs # [B, encoder_max_seq_length, H]
+        value = encoder_outputs
+        mask = create_mask_from_lengths(encoder_sequence_lengths, attention_type='scaled_dot_product')
+        scores = torch.matmul(query, key.transpose(-2, -1)) * self.scaling_factor
+        scores = scores.masked_fill(mask == 0, -1e10)
+        attention_weights = torch.softmax(scores, dim=-1)
+        context_vector = torch.matmul(attention_weights, value)
+        return context_vector
+
+
+def create_mask_from_lengths(encoder_seq_lengths, max_length=None, attention_type='additive', device=DEVICE):
     if max_length is None:
         max_length = encoder_seq_lengths.max().item()
     mask = torch.arange(max_length).expand(len(encoder_seq_lengths), max_length) < encoder_seq_lengths.unsqueeze(1)
-    return mask.unsqueeze(-1).to(device)
+    if attention_type == 'additive':
+        return mask.unsqueeze(-1).to(device)
+    elif attention_type == 'scaled_dot_product':
+        return mask.unsqueeze(1).to(device)
 
 
 class OneStepDecoder(nn.Module):
@@ -74,14 +94,18 @@ class OneStepDecoder(nn.Module):
         self.output_size = vocab_size+1 # add padding
         self.hidden_size = hidden_size
         self.lstm = nn.LSTM(output_embed_size, hidden_size, num_layers=1, batch_first=True)
-        self.attention = AdditiveAttention()
+        self.attention = ScaledDotProductAttention()
         self.out = nn.Linear(hidden_size, self.output_size)
 
     def forward(self, x, hidden, cell, encoder_outputs, encoder_sequence_lengths):
         output, (hidden, cell) = self.lstm(x, (hidden, cell))
         context_vector = self.attention(output, encoder_outputs, encoder_sequence_lengths)
-        assert context_vector.size() == (x.size(0), self.hidden_size)
-        output = output + context_vector.unsqueeze(1)
+        if len(context_vector.shape) == 2:
+            assert context_vector.size() == (x.size(0), self.hidden_size)
+            output = output + context_vector.unsqueeze(1)
+        elif len(context_vector.shape) == 3:
+            assert context_vector.size() == (x.size(0), 1, self.hidden_size)
+            output = output + context_vector
         output = self.out(output)
         return output, hidden, cell
 
