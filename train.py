@@ -67,7 +67,7 @@ class DataLoader:
 
 
 if __name__ == '__main__':
-    run_name = "no_attention"
+    run_name = "additive attention"
     wandb.init(project="Seq2Seq", name=run_name)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     NEPOCH = 100
