@@ -6,39 +6,8 @@ import random
 import pickle
 from tqdm import tqdm
 import wandb
-from utils import get_train_test_split_seq2seq
+from utils import get_train_test_split_seq2seq, S2SDataLoader
 from seq2seq import Seq2Seq
-random.seed(124)
-
-
-class DataLoader:
-    def __init__(self, seq_chinese, seq_english, batch_size, shuffle=True):
-        self.chinese = seq_chinese
-        self.english = seq_english
-        self.batch_size = batch_size
-        self.num_samples = len(self.chinese)
-        self.shuffle = shuffle
-
-    def __len__(self):
-        return int(np.ceil(len(self.chinese)/self.batch_size))
-
-    def __iter__(self):
-        if self.shuffle:
-            index_list = list(range(len(self.chinese)))
-            random.shuffle(index_list)
-            self.chinese = [self.chinese[i] for i in index_list]
-            self.english = [self.english[i] for i in index_list]
-        for i in range(0, self.num_samples, self.batch_size):
-            """"""
-            batch_chinese = self.chinese[i:i+self.batch_size]
-            batch_english = self.english[i:i+self.batch_size]
-            length_chinese = [len(x) for x in batch_chinese]
-            length_english = [len(x) for x in batch_english]
-            padded_chinese = nn.utils.rnn.pad_sequence([torch.tensor(seq) for seq in batch_chinese], batch_first=True,
-                                                       padding_value=0)
-            padded_english = nn.utils.rnn.pad_sequence([torch.tensor(seq) for seq in batch_english], batch_first=True,
-                                                       padding_value=0)
-            yield padded_english, torch.tensor(length_english, dtype=torch.int64), padded_chinese, torch.tensor(length_chinese, dtype=torch.int64)
 
 
 if __name__ == '__main__':
@@ -49,8 +18,8 @@ if __name__ == '__main__':
     BestEpoch=0
     BestLoss = np.Inf
     train_english, train_chinese, test_english, test_chinese = get_train_test_split_seq2seq()
-    train_data_loader = DataLoader(seq_chinese=train_chinese, seq_english=train_english, batch_size=128)
-    test_data_loader = DataLoader(seq_chinese=test_chinese, seq_english=test_english, batch_size=128, shuffle=False)
+    train_data_loader = S2SDataLoader(seq_chinese=train_chinese, seq_english=train_english, batch_size=128)
+    test_data_loader = S2SDataLoader(seq_chinese=test_chinese, seq_english=test_english, batch_size=128, shuffle=False)
     model = Seq2Seq(device=device).to(device)
     optimizer = optim.AdamW(model.parameters(), fused=True)
     optimizer.zero_grad()
