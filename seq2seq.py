@@ -176,6 +176,7 @@ class Seq2Seq(nn.Module):
         return outputs, loss
 
     def translate(self, input_sequence, input_seq_lengths, max_output_sequence=100):
+        """inference with top 1 probability. Likely too greedy."""
         encoder_outputs, _, _ = self.encoder(input_sequence, input_seq_lengths)
         outputs = []
         decoder_input = torch.zeros((input_sequence.size(0), 1, self.output_embed_size), device=self.device)
