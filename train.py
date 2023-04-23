@@ -6,7 +6,7 @@ import random
 import pickle
 from tqdm import tqdm
 import wandb
-from utils import get_train_test_split_seq2seq, S2SDataLoader
+from utils import get_train_test_split, S2SDataLoader
 from seq2seq import Seq2Seq
 
 
@@ -17,7 +17,7 @@ if __name__ == '__main__':
     NEPOCH = 100
     BestEpoch=0
     BestLoss = np.Inf
-    train_english, train_chinese, test_english, test_chinese = get_train_test_split_seq2seq()
+    train_english, train_chinese, test_english, test_chinese = get_train_test_split()
     train_data_loader = S2SDataLoader(seq_chinese=train_chinese, seq_english=train_english, batch_size=128)
     test_data_loader = S2SDataLoader(seq_chinese=test_chinese, seq_english=test_english, batch_size=128, shuffle=False)
     model = Seq2Seq(device=device).to(device)
