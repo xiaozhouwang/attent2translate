@@ -79,4 +79,6 @@ def create_negative_samples(positive_samples):
         negative_samples.append(random.choice(candidates))
     """check if negative samples is a list of lists with integers to ensure no funny bug"""
     assert all(isinstance(sublist, list) and all(isinstance(item, int) for item in sublist) for sublist in negative_samples)
+    """check if lengths match"""
+    assert [len(x) for x in negative_samples] == [len(x) for x in positive_samples]
     return negative_samples

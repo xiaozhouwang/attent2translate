@@ -33,40 +33,39 @@ class Dataloader:
         for i in range(0, self.num_samples, self.batch_size):
             batch_seq = self.seq[i:i+self.batch_size]
             batch_tar = self.targets[i:i+self.batch_size]
-            print(batch_seq)
             padded_seq = nn.utils.rnn.pad_sequence([torch.tensor(s) for s in batch_seq], batch_first=True,
                                                        padding_value=0)
-            yield padded_seq, torch.tensor(batch_tar, dtype=torch.int64)
+            yield padded_seq, torch.tensor(batch_tar, dtype=torch.float32)
 
 
 class BERT(nn.Module):
     def __init__(self, hidden_size=512):
         super(BERT, self).__init__()
         self.encoder = Encoder(input_dim=44800, hidden_size=hidden_size, num_layers=6, num_heads=8, ff_size=hidden_size*2,
-                               dropout_rate=0, max_length=101)
+                               dropout_rate=0, max_length=201)
         self.outlayer = nn.Linear(hidden_size, 1)
 
     def forward(self, x, x_mask):
         x = self.encoder(src=x, src_mask=x_mask)
-        return self.outlayer(x[:, 0, :])
+        return self.outlayer(x[:, 0, :]).flatten()
 
 
 if __name__ == '__main__':
     run_name = "bert classification"
     wandb.init(project="Classification_Bert_GPT", name=run_name)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     NEPOCH = 100
     BestEpoch=0
     BestLoss = np.Inf
     data = pickle.load(open("../data/data_classification.pk", "rb"))
-    train_data_loader = Dataloader(seq_pos=data['train']['pos'], seq_neg=data['train']['neg'], batch_size=128)
-    test_data_loader = Dataloader(seq_pos=data['test']['pos'], seq_neg=data['test']['neg'], batch_size=128,
+    train_data_loader = Dataloader(seq_pos=data['train']['pos'], seq_neg=data['train']['neg'], batch_size=256)
+    test_data_loader = Dataloader(seq_pos=data['test']['pos'], seq_neg=data['test']['neg'], batch_size=256,
                                   shuffle=False)
     model = BERT().to(device)
-    model = torch.compile(model)
     optimizer = optim.AdamW(model.parameters(), fused=True)
     optimizer.zero_grad()
-    loss_func = nn.BCELoss()
+    loss_func = nn.BCEWithLogitsLoss()
 
     for epoch in range(NEPOCH):
         epoch_loss = 0
