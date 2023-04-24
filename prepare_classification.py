@@ -41,10 +41,12 @@ print("generating negative samples")
 negative_train_chinese = create_negative_samples(positive_train_chinese)
 negative_test_chinese = create_negative_samples(positive_test_chinese)
 
-data = {'train': {'pos': [x+y for x, y in zip(train_english, positive_train_chinese)],
-                  'neg': [x+y for x, y in zip(train_english, negative_train_chinese)]},
-        'test': {'pos': [x+y for x, y in zip(test_english, positive_test_chinese)],
-                 'neg': [x+y for x, y in zip(test_english, negative_test_chinese)]}
+data = {'train': {'pos': positive_train_chinese,
+                  'neg': negative_train_chinese,
+                  'src': train_english},
+        'test': {'pos': positive_test_chinese,
+                 'neg': negative_test_chinese,
+                 'src': test_english}
         }
 print("saving data")
 pickle.dump(data, open("../data/data_classification.pk", "wb"))
