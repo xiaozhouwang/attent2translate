@@ -15,7 +15,7 @@ with open("../data/english.en") as f:
 """first tokenize with tiktoken, and then encode that with a dict"""
 def tokenize(english_lines, chinese_lines):
     tokenized_results = {'english': [], 'chinese': []}
-    #BERT: 0 is reserved for padding, 1 is reserved for CLS token
+    #BERTorGPTBase: 0 is reserved for padding, 1 is reserved for CLS token
     #GPT: 0 is reserved for padding, 1 is reserved for Positive, and 2 is reserved for Negative
     count = 3
     token_map = {}
