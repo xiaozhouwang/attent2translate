@@ -92,7 +92,7 @@ class BertorGPTDataloader:
         self.seq_pos = seq_pos
         self.seq_neg = seq_neg
         self.seq_src = seq_src
-        self.seq_src = [[1]+s for s in self.seq_src] # add [CLS] token
+        #self.seq_src = [[1]+s for s in self.seq_src] # add [CLS] token
         self.batch_size = batch_size
         self.shuffle = shuffle
 
@@ -159,5 +159,5 @@ class BERTorGPT(nn.Module):
 
     def forward(self, src, seg_seq, src_mask):
         x = self.bert(src, seg_seq, src_mask)
-        x = self.fc(x.mean(dim=1))
+        x = self.fc(x.mean(dim=1)) # without pretraining, it seems mean pooling is better than [CLS] token
         return x.flatten()

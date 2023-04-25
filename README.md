@@ -2,7 +2,7 @@
 
 ## Seq2Seq
 revisit RNN with attention, and vanilla transformer for chinese-english translation
-### see it in the [wandb project](https://wandb.ai/xiaozhou/Seq2Seq/workspace?workspace=user-xiaozhou)
+#### see the experiments [here](https://wandb.ai/xiaozhou/Seq2Seq/workspace?workspace=user-xiaozhou)
 
 ## Classification with Bert and GPT
 classify if it is a correct english-chinese pair with Bert and GPT. 
@@ -17,3 +17,6 @@ Anyway, for Bert,
 for GPT,
 1. for training, also randomly replacing the correct translation 50% of the time, and put the label (True/False) as the last token.
 2. same test set as Bert, use the predicted last token as predicted label.
+
+#### see the experiments [here](https://wandb.ai/xiaozhou/Classification_Bert_GPT/workspace?workspace=user-xiaozhou)
+Note: with this setup, it seems it suffers from "curse of randomness", i.e. the performance can be drastically different without fixing the random seed.

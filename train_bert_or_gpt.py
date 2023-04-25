@@ -6,13 +6,14 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import random
+import sys
 import pickle
 from tqdm import tqdm
 import wandb
 from transformer import create_src_mask, create_tgt_mask
 from utils import BertorGPTDataloader, BERTorGPT
 
-MODEL2TRAIN = 'gpt' # bert or gpt
+MODEL2TRAIN = sys.argv[1] # bert or gpt
 assert MODEL2TRAIN in ['bert', 'gpt']
 
 if __name__ == '__main__':
